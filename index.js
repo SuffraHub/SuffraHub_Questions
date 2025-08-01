@@ -102,6 +102,63 @@ app.post('/deleteQuestion', (req, res) => {
     });
 });
 
+app.post('/getAllQuestions', (req, res) => {
+  const { pollId } = req.body;
+
+  if (!pollId) {
+    return res.status(400).json({ message: 'pollId is required' });
+  }
+
+  const query = `
+    SELECT 
+      q.id AS question_id,
+      q.question,
+      q.description,
+      o.id AS option_id,
+      o.label,
+      pq.sort_order
+    FROM poll_questions pq
+    JOIN questions q ON pq.question_id = q.id
+    LEFT JOIN questions_options qo ON q.id = qo.question_id
+    LEFT JOIN options o ON qo.option_id = o.id
+    WHERE pq.poll_id = ?
+    ORDER BY pq.sort_order ASC, o.id ASC
+  `;
+
+  connection.query(query, [pollId], (err, results) => {
+    if (err) {
+      console.error('MySQL error:', err);
+      return res.status(500).json({ message: 'Failed to fetch questions' });
+    }
+
+    const questionsMap = {};
+
+    results.forEach(row => {
+      if (!questionsMap[row.question_id]) {
+        questionsMap[row.question_id] = {
+          question_id: row.question_id,
+          question: row.question,
+          description: row.description,
+          sort_order: row.sort_order,
+          options: []
+        };
+      }
+
+      if (row.option_id) {
+        questionsMap[row.question_id].options.push({
+          option_id: row.option_id,
+          label: row.label
+        });
+      }
+    });
+
+    const questions = Object.values(questionsMap);
+
+    return res.status(200).json({ questions });
+  });
+});
+
+
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`)
 })

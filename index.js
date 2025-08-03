@@ -2,9 +2,13 @@ const express = require('express')
 const app = express()
 const port = 8003
 const mysql = require('mysql');
+const cors = require('cors');
+
 require('dotenv').config();
 
 app.use(express.json());
+app.use(cors());
+
 
 const connection = mysql.createConnection({
   host: process.env.DB_HOST,
@@ -24,6 +28,45 @@ connection.connect(err => {
 app.get('/', (req, res) => {
   res.send('Hello World! from questions API')
 })
+
+app.get('/getQuestion/:id', (req, res) => {
+  const questionId = req.params.id;
+
+  connection.query(
+    'SELECT * FROM `questions` WHERE id=?',
+    [questionId],
+    (err, results) => {
+      if (err) {
+        return res.status(500).json({ error: 'Database error' });
+      }
+
+      if (results.length === 0) {
+        return res.status(404).json({ error: 'Question not found' });
+      }
+
+      res.json({ questionData: results[0] });
+    }
+  );
+});
+
+app.get('/getOptions/:questionId', (req, res) => {
+  const questionId = req.params.questionId;
+
+  connection.query('SELECT * FROM `questions_options` JOIN options ON option_id=options.id WHERE question_id=?',
+    [questionId],
+    (err, results) => {
+      if (err) {
+        return res.status(500).json({ error: 'Database error' });
+      }
+
+      if (results.length === 0) {
+        return res.status(404).json({ error: 'Question not found' });
+      }
+
+      res.json({ options: results });
+    }
+  )
+});
 
 app.post('/createQuestion', (req, res) => {
     const { question, company_id, description, hidden, user_id } = req.body;
@@ -102,12 +145,8 @@ app.post('/deleteQuestion', (req, res) => {
     });
 });
 
-app.post('/getAllQuestions', (req, res) => {
-  const { pollId } = req.body;
-
-  if (!pollId) {
-    return res.status(400).json({ message: 'pollId is required' });
-  }
+app.get('/getAllQuestions/:pollId', (req, res) => {
+  const pollId = req.params.pollId;
 
   const query = `
     SELECT 

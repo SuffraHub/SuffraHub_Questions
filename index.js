@@ -90,7 +90,7 @@ app.post('/createQuestion', (req, res) => {
     });
 });
 
-app.post('/editQuestion', (req, res) => {
+app.put('/editQuestion', (req, res) => {
   const { id, question, company_id, description, hidden, user_id } = req.body;
 
   if (!id || !question || !company_id || !description || hidden === undefined || !user_id) {
@@ -122,7 +122,7 @@ app.post('/editQuestion', (req, res) => {
 
 
 
-app.post('/deleteQuestion', (req, res) => {
+app.delete('/deleteQuestion', (req, res) => {
     const { id } = req.body;
 
     if (!id) {

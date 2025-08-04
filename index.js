@@ -69,18 +69,18 @@ app.get('/getOptions/:questionId', (req, res) => {
 });
 
 app.post('/createQuestion', (req, res) => {
-    const { question, company_id, description, hidden, user_id } = req.body;
+    const { question, description, hidden, user_id } = req.body;
 
-    if (!question || !company_id || !description || hidden === undefined || !user_id) {
+    if (!question || !description || hidden === undefined || !user_id) {
         return res.status(400).json({ message: 'Required field not provided' });
     }
 
     const query = `
-        INSERT INTO questions (question, company_id, description, hidden, user_id)
+        INSERT INTO questions (question, description, hidden, user_id)
         VALUES (?, ?, ?, ?, ?)
     `;
 
-    connection.query(query, [question, company_id, description, hidden, user_id], (err, result) => {
+    connection.query(query, [question, description, hidden, user_id], (err, result) => {
         if (err) {
             console.error('MySQL error:', err);
             return res.status(500).json({ message: 'Question creation failed' });
@@ -91,19 +91,19 @@ app.post('/createQuestion', (req, res) => {
 });
 
 app.put('/editQuestion', (req, res) => {
-  const { id, question, company_id, description, hidden, user_id } = req.body;
+  const { id, question, company_id, description, hidden } = req.body;
 
-  if (!id || !question || !company_id || !description || hidden === undefined || !user_id) {
+  if (!id || !question || !company_id || !description || hidden === undefined) {
     return res.status(400).json({ message: 'Required field not provided' });
   }
 
   const query = `
     UPDATE questions
-    SET question = ?, company_id = ?, description = ?, hidden = ?, user_id = ?
+    SET question = ?, company_id = ?, description = ?, hidden = ?
     WHERE id = ?
   `;
 
-  const values = [question, company_id, description, hidden, user_id, id];
+  const values = [question, company_id, description, hidden, id];
 
   connection.query(query, values, (err, result) => {
     if (err) {
@@ -196,6 +196,85 @@ app.get('/getAllQuestions/:pollId', (req, res) => {
     return res.status(200).json({ questions });
   });
 });
+
+app.post('/assignQuestionsToPoll', (req, res) => {
+  const { pollId, questions } = req.body;
+
+  if (!pollId || !Array.isArray(questions)) {
+    return res.status(400).json({ message: 'Invalid payload' });
+  }
+
+  const values = questions.map((q, idx) => [pollId, q.question_id, 0, idx]);
+
+  const query = `
+    INSERT INTO poll_questions (poll_id, question_id, is_draft, sort_order)
+    VALUES ?
+    ON DUPLICATE KEY UPDATE sort_order=VALUES(sort_order)
+  `;
+
+  connection.query(query, [values], (err) => {
+    if (err) {
+      console.error('MySQL error:', err);
+      return res.status(500).json({ message: 'Assignment failed' });
+    }
+
+    return res.status(200).json({ message: 'Questions assigned to poll' });
+  });
+});
+
+app.delete('/unassignQuestionFromPoll', (req, res) => {
+  const { pollId, questionId } = req.body;
+
+  if (!pollId || !questionId) {
+    return res.status(400).json({ message: 'Missing pollId or questionId' });
+  }
+
+  const query = `DELETE FROM poll_questions WHERE poll_id = ? AND question_id = ?`;
+
+  connection.query(query, [pollId, questionId], (err, result) => {
+    if (err) {
+      console.error('MySQL error:', err);
+      return res.status(500).json({ message: 'Unassignment failed' });
+    }
+
+    return res.status(200).json({ message: 'Question unassigned from poll' });
+  });
+});
+
+
+app.get('/getTenantQuestions/:companyId', (req, res) => {
+  const companyId = req.params.companyId;
+
+  if (!companyId) {
+    return res.status(400).json({ message: 'Company ID is required' });
+  }
+
+  const query = `
+    SELECT 
+      q.id AS question_id,
+      q.question,
+      q.description,
+      q.hidden,
+      q.user_id,
+      q.company_id
+    FROM questions q
+    WHERE q.company_id = ?
+  `;
+
+  connection.query(query, [companyId], (err, results) => {
+    if (err) {
+      console.error('MySQL error:', err);
+      return res.status(500).json({ message: 'Failed to fetch tenant questions' });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({ message: 'No questions found for this tenant' });
+    }
+
+    return res.status(200).json({ questions: results });
+  });
+});
+
 
 
 app.listen(port, () => {

@@ -296,39 +296,87 @@ app.get('/getTenantQuestions/:companyId', (req, res) => {
 });
 
 app.post('/addOptionsToQuestion', (req, res) => {
-  const { questionId, labels } = req.body;
+  const { questionId, labels, tenantId } = req.body;
 
-  if (!questionId || !Array.isArray(labels)) {
+  if (!questionId || !Array.isArray(labels) || !tenantId) {
     return res.status(400).json({ message: 'Invalid payload' });
   }
 
-  const values = labels.map(label => [label]);
+  // Pobierz istniejące opcje po labelach i tenantId
+  const selectOptionsQuery = `SELECT id, label FROM options WHERE label IN (?) AND tenant_id = ?`;
+  connection.query(selectOptionsQuery, [labels, tenantId], (err, rows) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: 'Option fetch failed' });
+    }
 
-  // Wstaw nowe opcje, jeśli nie istnieją
-  const insertOptionsQuery = `INSERT IGNORE INTO options (label) VALUES ?`;
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'No matching options found' });
+    }
 
-  connection.query(insertOptionsQuery, [values], (err) => {
-    if (err) return res.status(500).json({ message: 'Option insert failed' });
+    // Przygotuj pary [questionId, optionId]
+    const optionsToLink = rows.map(row => [questionId, row.id]);
 
-    // Pobierz ich ID
-    connection.query(`SELECT id, label FROM options WHERE label IN (?)`, [labels], (err, rows) => {
-      if (err) return res.status(500).json({ message: 'Option fetch failed' });
+    if (optionsToLink.length === 0) {
+      return res.status(404).json({ message: 'No matching options to link' });
+    }
 
-      const optionsToLink = rows.map(row => [questionId, row.id]);
+    // Wstaw linki pytanie-opcja, ignoruj duplikaty
+    const linkQuery = `INSERT IGNORE INTO questions_options (question_id, option_id) VALUES ?`;
+    connection.query(linkQuery, [optionsToLink], (err) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ message: 'Link insert failed' });
+      }
 
-      const linkQuery = `INSERT IGNORE INTO questions_options (question_id, option_id) VALUES ?`;
-      connection.query(linkQuery, [optionsToLink], (err) => {
-        if (err) return res.status(500).json({ message: 'Link insert failed' });
-
-        return res.status(200).json({ message: 'Options linked to question' });
-      });
+      return res.status(200).json({ message: 'Options linked to question' });
     });
+  });
+});
+
+// Dodaj opcję do tabeli options
+app.post('/addOption', (req, res) => {
+  const { label, company_id, type } = req.body;
+  const allowedTypes = ['positive', 'negative', 'neutral', 'custom'];
+
+  if (!label || !company_id || !type) {
+    return res.status(400).json({ message: 'Missing fields' });
+  }
+
+  if (!allowedTypes.includes(type)) {
+    return res.status(400).json({ message: 'Invalid type' });
+  }
+
+  const query = `
+    INSERT INTO options (label, tenant_id, type)
+    VALUES (?, ?, ?)
+    ON DUPLICATE KEY UPDATE label = label
+  `;
+
+  connection.query(query, [label, company_id, type], (err, result) => {
+    if (err) return res.status(500).json({ message: 'DB insert failed', error: err });
+
+    return res.status(201).json({ message: 'Option added', id: result.insertId });
+  });
+});
+
+
+// Usuń opcję po id
+app.delete('/deleteOption/:id', (req, res) => {
+  const id = req.params.id;
+
+  const query = `DELETE FROM options WHERE id = ?`;
+  connection.query(query, [id], (err, result) => {
+    if (err) return res.status(500).json({ message: 'DB delete failed' });
+
+    return res.status(200).json({ message: 'Option deleted' });
   });
 });
 
 
 
+
 app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`)
+  console.log(`Question API listening on port ${port}`)
 })
 

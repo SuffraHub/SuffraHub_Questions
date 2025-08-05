@@ -49,11 +49,11 @@ app.get('/getQuestion/:id', (req, res) => {
   );
 });
 
-app.get('/getOptions/:questionId', (req, res) => {
-  const questionId = req.params.questionId;
+app.get('/getQuestionOptions/:questionId', (req, res) => {
+  const tenantId = req.params.tenantId;
 
-  connection.query('SELECT * FROM `questions_options` JOIN options ON option_id=options.id WHERE question_id=?',
-    [questionId],
+  connection.query('SELECT * FROM `questions_options` JOIN options ON option_id=options.id WHERE questions.id=?',
+    [tenantId],
     (err, results) => {
       if (err) {
         return res.status(500).json({ error: 'Database error' });
@@ -68,42 +68,62 @@ app.get('/getOptions/:questionId', (req, res) => {
   )
 });
 
-app.post('/createQuestion', (req, res) => {
-    const { question, company_id, description, hidden, user_id } = req.body;
+app.get('/getOptions/:tenantId', (req, res) => {
+  const tenantId = req.params.tenantId;
 
-    if (!question || !company_id || !description || hidden === undefined || !user_id) {
-        return res.status(400).json({ message: 'Required field not provided' });
+  connection.query('SELECT * FROM `options` WHERE tenant_id=?',
+    [tenantId],
+    (err, results) => {
+      if (err) {
+        return res.status(500).json({ error: 'Database error' });
+      }
+
+      if (results.length === 0) {
+        return res.status(404).json({ error: 'Question not found' });
+      }
+
+      res.json({ options: results });
+    }
+  )
+});
+
+app.post("/createQuestion", (req, res) => {
+  const { question, description, hidden, user_id, company_id } = req.body;
+
+  if (!question || description === undefined || hidden === undefined || !user_id || !company_id) {
+    return res.status(400).json({ message: "Required field not provided" });
+  }
+
+  const query = `
+    INSERT INTO questions (question, description, hidden, user_id, company_id)
+    VALUES (?, ?, ?, ?, ?)
+  `;
+
+  connection.query(query, [question, description, hidden, user_id, company_id], (err, result) => {
+    if (err) {
+      console.error("MySQL error:", err);
+      return res.status(500).json({ message: "Question creation failed" });
     }
 
-    const query = `
-        INSERT INTO questions (question, company_id, description, hidden, user_id)
-        VALUES (?, ?, ?, ?, ?)
-    `;
-
-    connection.query(query, [question, company_id, description, hidden, user_id], (err, result) => {
-        if (err) {
-            console.error('MySQL error:', err);
-            return res.status(500).json({ message: 'Question creation failed' });
-        }
-
-        return res.status(201).json({ message: 'Question created' });
-    });
+    // Zwracamy ID nowo utworzonego pytania do dalszych działań (np. dodawania opcji)
+    return res.status(201).json({ message: "Question created", questionId: result.insertId });
+  });
 });
 
 app.put('/editQuestion', (req, res) => {
-  const { id, question, company_id, description, hidden, user_id } = req.body;
+  const { id, question, company_id, description, hidden } = req.body;
 
-  if (!id || !question || !company_id || !description || hidden === undefined || !user_id) {
+  if (!id || !question || !company_id || !description || hidden === undefined) {
     return res.status(400).json({ message: 'Required field not provided' });
   }
 
   const query = `
     UPDATE questions
-    SET question = ?, company_id = ?, description = ?, hidden = ?, user_id = ?
+    SET question = ?, company_id = ?, description = ?, hidden = ?
     WHERE id = ?
   `;
 
-  const values = [question, company_id, description, hidden, user_id, id];
+  const values = [question, company_id, description, hidden, id];
 
   connection.query(query, values, (err, result) => {
     if (err) {
@@ -197,8 +217,166 @@ app.get('/getAllQuestions/:pollId', (req, res) => {
   });
 });
 
+app.post('/assignQuestionsToPoll', (req, res) => {
+  const { pollId, questions } = req.body;
+
+  if (!pollId || !Array.isArray(questions)) {
+    return res.status(400).json({ message: 'Invalid payload' });
+  }
+
+  const values = questions.map((q, idx) => [pollId, q.question_id, 0, idx]);
+
+  const query = `
+    INSERT INTO poll_questions (poll_id, question_id, is_draft, sort_order)
+    VALUES ?
+    ON DUPLICATE KEY UPDATE sort_order=VALUES(sort_order)
+  `;
+
+  connection.query(query, [values], (err) => {
+    if (err) {
+      console.error('MySQL error:', err);
+      return res.status(500).json({ message: 'Assignment failed' });
+    }
+
+    return res.status(200).json({ message: 'Questions assigned to poll' });
+  });
+});
+
+app.delete('/unassignQuestionFromPoll', (req, res) => {
+  const { pollId, questionId } = req.body;
+
+  if (!pollId || !questionId) {
+    return res.status(400).json({ message: 'Missing pollId or questionId' });
+  }
+
+  const query = `DELETE FROM poll_questions WHERE poll_id = ? AND question_id = ?`;
+
+  connection.query(query, [pollId, questionId], (err, result) => {
+    if (err) {
+      console.error('MySQL error:', err);
+      return res.status(500).json({ message: 'Unassignment failed' });
+    }
+
+    return res.status(200).json({ message: 'Question unassigned from poll' });
+  });
+});
+
+
+app.get('/getTenantQuestions/:companyId', (req, res) => {
+  const companyId = req.params.companyId;
+
+  if (!companyId) {
+    return res.status(400).json({ message: 'Company ID is required' });
+  }
+
+  const query = `
+    SELECT 
+      q.id AS question_id,
+      q.question,
+      q.description,
+      q.hidden,
+      q.user_id,
+      q.company_id
+    FROM questions q
+    WHERE q.company_id = ?
+  `;
+
+  connection.query(query, [companyId], (err, results) => {
+    if (err) {
+      console.error('MySQL error:', err);
+      return res.status(500).json({ message: 'Failed to fetch tenant questions' });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({ message: 'No questions found for this tenant' });
+    }
+
+    return res.status(200).json({ questions: results });
+  });
+});
+
+app.post('/addOptionsToQuestion', (req, res) => {
+  const { questionId, labels, tenantId } = req.body;
+
+  if (!questionId || !Array.isArray(labels) || !tenantId) {
+    return res.status(400).json({ message: 'Invalid payload' });
+  }
+
+  // Pobierz istniejące opcje po labelach i tenantId
+  const selectOptionsQuery = `SELECT id, label FROM options WHERE label IN (?) AND tenant_id = ?`;
+  connection.query(selectOptionsQuery, [labels, tenantId], (err, rows) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: 'Option fetch failed' });
+    }
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'No matching options found' });
+    }
+
+    // Przygotuj pary [questionId, optionId]
+    const optionsToLink = rows.map(row => [questionId, row.id]);
+
+    if (optionsToLink.length === 0) {
+      return res.status(404).json({ message: 'No matching options to link' });
+    }
+
+    // Wstaw linki pytanie-opcja, ignoruj duplikaty
+    const linkQuery = `INSERT IGNORE INTO questions_options (question_id, option_id) VALUES ?`;
+    connection.query(linkQuery, [optionsToLink], (err) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ message: 'Link insert failed' });
+      }
+
+      return res.status(200).json({ message: 'Options linked to question' });
+    });
+  });
+});
+
+// Dodaj opcję do tabeli options
+app.post('/addOption', (req, res) => {
+  const { label, company_id, type } = req.body;
+  const allowedTypes = ['positive', 'negative', 'neutral', 'custom'];
+
+  if (!label || !company_id || !type) {
+    return res.status(400).json({ message: 'Missing fields' });
+  }
+
+  if (!allowedTypes.includes(type)) {
+    return res.status(400).json({ message: 'Invalid type' });
+  }
+
+  const query = `
+    INSERT INTO options (label, tenant_id, type)
+    VALUES (?, ?, ?)
+    ON DUPLICATE KEY UPDATE label = label
+  `;
+
+  connection.query(query, [label, company_id, type], (err, result) => {
+    if (err) return res.status(500).json({ message: 'DB insert failed', error: err });
+
+    return res.status(201).json({ message: 'Option added', id: result.insertId });
+  });
+});
+
+
+// Usuń opcję po id
+app.delete('/deleteOption/:id', (req, res) => {
+  const id = req.params.id;
+
+  const query = `DELETE FROM options WHERE id = ?`;
+  connection.query(query, [id], (err, result) => {
+    if (err) return res.status(500).json({ message: 'DB delete failed' });
+
+    return res.status(200).json({ message: 'Option deleted' });
+  });
+});
+
+
+
 
 app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`)
+  console.log(`Question API listening on port ${port}`)
 })
 

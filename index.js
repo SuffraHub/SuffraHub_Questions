@@ -49,11 +49,11 @@ app.get('/getQuestion/:id', (req, res) => {
   );
 });
 
-app.get('/getOptions/:questionId', (req, res) => {
-  const questionId = req.params.questionId;
+app.get('/getQuestionOptions/:questionId', (req, res) => {
+  const tenantId = req.params.tenantId;
 
-  connection.query('SELECT * FROM `questions_options` JOIN options ON option_id=options.id WHERE question_id=?',
-    [questionId],
+  connection.query('SELECT * FROM `questions_options` JOIN options ON option_id=options.id WHERE questions.id=?',
+    [tenantId],
     (err, results) => {
       if (err) {
         return res.status(500).json({ error: 'Database error' });
@@ -68,26 +68,46 @@ app.get('/getOptions/:questionId', (req, res) => {
   )
 });
 
-app.post('/createQuestion', (req, res) => {
-    const { question, description, hidden, user_id } = req.body;
+app.get('/getOptions/:tenantId', (req, res) => {
+  const tenantId = req.params.tenantId;
 
-    if (!question || !description || hidden === undefined || !user_id) {
-        return res.status(400).json({ message: 'Required field not provided' });
+  connection.query('SELECT * FROM `options` WHERE tenant_id=?',
+    [tenantId],
+    (err, results) => {
+      if (err) {
+        return res.status(500).json({ error: 'Database error' });
+      }
+
+      if (results.length === 0) {
+        return res.status(404).json({ error: 'Question not found' });
+      }
+
+      res.json({ options: results });
+    }
+  )
+});
+
+app.post("/createQuestion", (req, res) => {
+  const { question, description, hidden, user_id, company_id } = req.body;
+
+  if (!question || description === undefined || hidden === undefined || !user_id || !company_id) {
+    return res.status(400).json({ message: "Required field not provided" });
+  }
+
+  const query = `
+    INSERT INTO questions (question, description, hidden, user_id, company_id)
+    VALUES (?, ?, ?, ?, ?)
+  `;
+
+  connection.query(query, [question, description, hidden, user_id, company_id], (err, result) => {
+    if (err) {
+      console.error("MySQL error:", err);
+      return res.status(500).json({ message: "Question creation failed" });
     }
 
-    const query = `
-        INSERT INTO questions (question, description, hidden, user_id)
-        VALUES (?, ?, ?, ?, ?)
-    `;
-
-    connection.query(query, [question, description, hidden, user_id], (err, result) => {
-        if (err) {
-            console.error('MySQL error:', err);
-            return res.status(500).json({ message: 'Question creation failed' });
-        }
-
-        return res.status(201).json({ message: 'Question created' });
-    });
+    // Zwracamy ID nowo utworzonego pytania do dalszych działań (np. dodawania opcji)
+    return res.status(201).json({ message: "Question created", questionId: result.insertId });
+  });
 });
 
 app.put('/editQuestion', (req, res) => {
@@ -272,6 +292,37 @@ app.get('/getTenantQuestions/:companyId', (req, res) => {
     }
 
     return res.status(200).json({ questions: results });
+  });
+});
+
+app.post('/addOptionsToQuestion', (req, res) => {
+  const { questionId, labels } = req.body;
+
+  if (!questionId || !Array.isArray(labels)) {
+    return res.status(400).json({ message: 'Invalid payload' });
+  }
+
+  const values = labels.map(label => [label]);
+
+  // Wstaw nowe opcje, jeśli nie istnieją
+  const insertOptionsQuery = `INSERT IGNORE INTO options (label) VALUES ?`;
+
+  connection.query(insertOptionsQuery, [values], (err) => {
+    if (err) return res.status(500).json({ message: 'Option insert failed' });
+
+    // Pobierz ich ID
+    connection.query(`SELECT id, label FROM options WHERE label IN (?)`, [labels], (err, rows) => {
+      if (err) return res.status(500).json({ message: 'Option fetch failed' });
+
+      const optionsToLink = rows.map(row => [questionId, row.id]);
+
+      const linkQuery = `INSERT IGNORE INTO questions_options (question_id, option_id) VALUES ?`;
+      connection.query(linkQuery, [optionsToLink], (err) => {
+        if (err) return res.status(500).json({ message: 'Link insert failed' });
+
+        return res.status(200).json({ message: 'Options linked to question' });
+      });
+    });
   });
 });
 

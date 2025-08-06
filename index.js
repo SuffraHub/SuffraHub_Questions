@@ -7,7 +7,10 @@ const cors = require('cors');
 require('dotenv').config();
 
 app.use(express.json());
-app.use(cors());
+app.use(cors({
+  origin: true,
+  credentials: true
+}));
 
 
 const connection = mysql.createConnection({
@@ -50,10 +53,10 @@ app.get('/getQuestion/:id', (req, res) => {
 });
 
 app.get('/getQuestionOptions/:questionId', (req, res) => {
-  const tenantId = req.params.tenantId;
+  const question_id = req.params.questionId;
 
-  connection.query('SELECT * FROM `questions_options` JOIN options ON option_id=options.id WHERE questions.id=?',
-    [tenantId],
+  connection.query('SELECT * FROM `questions_options` JOIN options ON option_id=options.id WHERE questions_options.question_id=?',
+    [question_id],
     (err, results) => {
       if (err) {
         return res.status(500).json({ error: 'Database error' });
@@ -63,7 +66,7 @@ app.get('/getQuestionOptions/:questionId', (req, res) => {
         return res.status(404).json({ error: 'Question not found' });
       }
 
-      res.json({ options: results });
+      res.json({ options: results.map(row => row.label) });
     }
   )
 });
@@ -276,8 +279,12 @@ app.get('/getTenantQuestions/:companyId', (req, res) => {
       q.description,
       q.hidden,
       q.user_id,
-      q.company_id
+      q.company_id,
+      q.created_at,
+      u.username
     FROM questions q
+    LEFT JOIN users u
+    ON q.user_id = u.id
     WHERE q.company_id = ?
   `;
 
@@ -301,6 +308,8 @@ app.post('/addOptionsToQuestion', (req, res) => {
   if (!questionId || !Array.isArray(labels) || !tenantId) {
     return res.status(400).json({ message: 'Invalid payload' });
   }
+
+  connection.query('DELETE FROM questions_options WHERE question_id = ?', questionId);
 
   // Pobierz istniejące opcje po labelach i tenantId
   const selectOptionsQuery = `SELECT id, label FROM options WHERE label IN (?) AND tenant_id = ?`;

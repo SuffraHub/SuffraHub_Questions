@@ -178,7 +178,7 @@ app.get('/getAllQuestions/:pollId', (req, res) => {
       q.description,
       o.id AS option_id,
       o.label,
-      pq.sort_order,
+      pq.sort_order
     FROM poll_questions pq
     JOIN questions q ON pq.question_id = q.id
     LEFT JOIN questions_options qo ON q.id = qo.question_id
